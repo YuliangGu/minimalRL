@@ -1,0 +1,17 @@
+torch>=2.1
+gymnasium>=0.29
+numpy>=1.24
+
+[dev]
+pytest>=7.4
+pytest-xdist>=3.3
+ruff>=0.4
+black>=24.4
+mypy>=1.8
+
+[envpool]
+envpool>=0.8.3
+cloudpickle>=2.2
+
+[wandb]
+wandb>=0.15
