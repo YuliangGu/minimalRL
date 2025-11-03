@@ -27,3 +27,11 @@ wandb/
 
 # Editors
 .idea/
+
+# Documentation builds
+docs/build/
+
+# vscode settings
+.vscode/
+settings.json
+
