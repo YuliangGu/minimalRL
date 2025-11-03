@@ -27,11 +27,15 @@ wandb/
 
 # Editors
 .idea/
+.vscode/
+.github/
 
 # Documentation builds
 docs/build/
 
+# Docs sources (until published)
+docs/source/
+
 # vscode settings
 .vscode/
 settings.json
-

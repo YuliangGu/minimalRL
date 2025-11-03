@@ -1,19 +1,16 @@
 MinimalRL Documentation
 =======================
 
-This microsite collects theoretical notes and implementation breadcrumbs for each algorithm in
-the repository. Start with the algorithm cards or dive straight into the underlying derivations.
+This microsite collects theoretical and implementation notes for each algorithm in the
+repository. Browse by algorithm to keep the overview and derivation side-by-side.
 
 .. toctree::
-   :maxdepth: 1
-   :caption: Algorithm Guides
+   :maxdepth: 2
+   :caption: Algorithms
 
-   algorithms/index
-
-.. toctree::
-   :maxdepth: 1
-   :caption: Theory Notes
-
-   theory/index
+   algorithms/reinforce/index
+   algorithms/ppo/index
+   algorithms/rnd/index
+   algorithms/sac/index
 
 For implementation-level context and CLI entry points, see ``minimalrl/algos/`` in the repo tree.
