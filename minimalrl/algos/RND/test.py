@@ -9,11 +9,10 @@ import envpool
 import gym
 import numpy as np
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
-import torch.optim as optim
 import tyro
 from gym.wrappers.normalize import RunningMeanStd
+from torch import nn, optim
 from torch.distributions.categorical import Categorical
 from torch.utils.tensorboard import SummaryWriter
 
@@ -38,13 +37,13 @@ class Args:
     """whether to capture videos of the agent performances (check out `videos` folder)"""
 
     # Algorithm specific arguments
-    env_id: str = "Pong-v5"
+    env_id: str = "MontezumaRevenge-v5"
     """the id of the environment"""
     total_timesteps: int = 2000000000
     """total timesteps of the experiments"""
     learning_rate: float = 1e-4
     """the learning rate of the optimizer"""
-    num_envs: int = 16
+    num_envs: int = 128
     """the number of parallel game environments"""
     num_steps: int = 128
     """the number of steps to run in each environment per policy rollout"""

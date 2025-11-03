@@ -12,6 +12,7 @@ Batch = Dict[str, np.ndarray]
 
 @dataclass
 class ReplayBuffer:
+    """A simple FIFO experience replay buffer for off-policy algorithms."""
     capacity: int
     obs_shape: Tuple[int, ...]
     action_shape: Tuple[int, ...]

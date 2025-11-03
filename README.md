@@ -1,37 +1,46 @@
-# minimalrl
+# minimalRL
 
-MinimalRL is a reinforcement learning playbook.
+minimalRL is a lightweight PyTorch playbook for reinforcement learning experiments.
 
-## Project Goals
-- **Minimalism.** Only extract utilities when multiple algorithms use them.
-- **Wide coverage.** Includes on-policy, off-policy, imitation, offline, world-model, transformer, and diffusion-based methods.
-- **Scalability.** Lightweight DDP, actor/learner, and replay server utilities demonstrate distributed training patterns without heavy dependencies.
+## Highlights
+- Clean reference implementations of classic and curiosity-driven algorithms.
+- Small core of reusable utilities and experiment configs.
+- Ready scripts for training, evaluation, and logging.
+- Lightweight theory notes for each algorithm, linked directly from the docs.
+- Static theory microsite in `docs/theory/index.html`; keep it in sync with `make theory-site`.
 
 ## Quick Start
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -e .[dev]
+git clone https://github.com/your-org/minimalRL.git
+cd minimalRL
+python -m venv .venv && source .venv/bin/activate
+python -m minimalrl.algos.ppo.train
 ```
 
-Run a quick PPO smoke test:
-```bash
-make train-ppo-cartpole
-```
+Once installed, the `Makefile` mirrors the common workflows:
 
 ## Repository Layout
 ```
 minimalrl/
-  core/                 # Common utilities that stay small and composable
-  algos/                # Each algorithm is self-contained
-  dist/                 # Optional distributed helpers
-  examples/             # Reproducible entry points and shell scripts
-  tests/                # Focused unit + smoke tests
-configs/                # YAML configuration files for experiments
+  core/         # experiment config, logging, and torch helpers
+  algos/        # self-contained algorithm implementations
+  dist/         # optional distributed training utilities
+  examples/     # runnable templates and CLI helpers
+  tests/        # targeted unit and smoke tests
+configs/        # YAML configs 
+docs/           # Theory notes and longer-form guides
 ```
 
+## Algorithms at a Glance
+- PPO (`python -m minimalrl.algos.ppo.train`) — clipped policy optimisation with GAE. Doc: [`docs/algorithms/ppo.md`](docs/algorithms/ppo.md).
+- REINFORCE (`python -m minimalrl.algos.reinforce.train`) — vanilla policy gradient baseline. Doc: [`docs/algorithms/reinforce.md`](docs/algorithms/reinforce.md).
+- SAC (`python -m minimalrl.algos.sac.train`) — entropy-regularised actor-critic for continuous control. Doc: [`docs/algorithms/sac.md`](docs/algorithms/sac.md).
+- RND (`python -m minimalrl.algos.RND.train`) — intrinsic reward exploration head atop PPO. Doc: [`docs/algorithms/rnd.md`](docs/algorithms/rnd.md).
+
+Each algorithm directory carries a short README with entry points and implementation notes: see [`minimalrl/algos/`](minimalrl/algos/README.md).
+
 ## Contributing
-Pull requests are welcome. Keep changes tightly scoped, document new configurations, and add tests for new utilities.
+Open pull requests with focused changes, document new configs, and add targeted tests. Include links to any new theory notes under `docs/`.
 
 ## License
-MinimalRL is released under the [MIT License](LICENSE).
+Released under the [MIT License](LICENSE).

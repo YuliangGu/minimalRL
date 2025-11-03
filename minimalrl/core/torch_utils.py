@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import random
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
-from typing import Iterable, Iterator, Optional
+from typing import Optional
 
 import numpy as np
 import torch

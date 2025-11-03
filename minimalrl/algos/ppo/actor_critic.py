@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Optional, Tuple
 
 import numpy as np
 import torch
-import torch.nn as nn
+from torch import nn
 
 
 def layer_init(layer, std = np.sqrt(2), bias_const = 0.0):

@@ -1,25 +1,45 @@
-"""PPO(continous) training loop."""
-
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
-
-import numpy as np
-from collections import deque
-import torch
 import time
+from collections import deque
+from dataclasses import dataclass
+from typing import Tuple
+
 import envpool
 import gym
+import numpy as np
+import torch
+from actor_critic_cnn import ActorCriticCNN, RandomNetworkDistillation
 from gym.wrappers.normalize import RunningMeanStd
 
 from minimalrl.core.config import ExperimentConfig, load_config
 from minimalrl.core.logger import Logger, LoggerConfig
 from minimalrl.core.torch_utils import seed_all
 
-from minimalrl.algos.RND.actor_critic_cnn import ActorCriticCNN, RandomNetworkDistillation
 
-# Helper class to compute discounted reward sums (CleanRL/OpenAI Baselines style)
+# Some helpers for handling different image shape conventions
+def space_chw(shape: Tuple[int, int, int]) -> Tuple[int, int, int]:
+    """Return (C,H,W) regardless of whether env returns CHW or HWC."""
+    assert len(shape) == 3
+    if shape[0] in (1, 3, 4):
+        return shape[0], shape[1], shape[2]           # CHW
+    else:
+        return shape[2], shape[0], shape[1]           # HWC -> CHW
+
+def ensure_nchw(x: torch.Tensor) -> torch.Tensor:
+    """Convert [N,H,W,C] to [N,C,H,W] if needed."""
+    assert x.ndim == 4, f"obs must be 4D [N,C,H,W] or [N,H,W,C], got {x.shape}"
+    if x.shape[1] in (1, 3, 4):  # already NCHW
+        return x
+    return x.permute(0, 3, 1, 2).contiguous()
+
+def last_frame_nchw(x: torch.Tensor) -> torch.Tensor:
+    """Return the last stacked frame in NCHW -> shape [N,1,H,W]."""
+    x = ensure_nchw(x)
+    return x[:, -1:, ...]
+
+# wrappers (CleanRL/OpenAI Baselines style)
 class RewardForwardFilter: 
     def __init__(self, gamma):
         self.rewems = None
@@ -70,17 +90,18 @@ class RNDConfig(ExperimentConfig):
     # Overrides
     env_id: str = "Pong-v5"
     learning_rate: float = 1e-4
-    batch_size: int = 64       
+    batch_size: int = 64
     epochs: int = 5
     num_steps: int = 128
     num_envs: int = 16
-    num_iterations: int = 2000
+    num_iterations: int = 20000
 
     epsilon: float = 0.2
     gamma: float = 0.999
     gae_lambda: float = 0.95
     ent_coef: float = 0.001
     vf_coef: float = 0.5
+    vf_clip_coef: float = 0.2
     rnd_update_proportion: float = 0.25
 
 
@@ -103,46 +124,51 @@ def train(config: RNDConfig) -> None:
     envs.single_observation_space = envs.observation_space
     envs = RecordEpisodeStatistics(envs)
 
-    rnd = RandomNetworkDistillation(1, envs.action_space.n).to(device)
-    agent = ActorCriticCNN(envs.observation_space.shape, envs.action_space.n, FiLM=False).to(device)
+    C, H, W = space_chw(envs.observation_space.shape)
+
+    rnd = RandomNetworkDistillation(in_channels=1, image_shape=(84, 84)).to(device)
+    agent = ActorCriticCNN((C, H, W), envs.action_space.n, FiLM=False).to(device)
+    
     params = list(agent.parameters()) + list(rnd.predictor.parameters())
     optimizer = torch.optim.Adam(params, lr=config.learning_rate, eps=1e-5)
     run_name = f"RND_PPO_{config.env_id}_{config.seed}_{int(time.time())}"
     logger = Logger(LoggerConfig(log_dir=config.log_dir, run_name=run_name))
 
     # Obs/reward normalization (following CLeanRL and orginal RND implementation)
-    obs_rms = RunningMeanStd(shape=(1, 1, 84, 84)) 
+    obs_rms = RunningMeanStd(shape=(1, 1, H, W))
     rew_rms = RunningMeanStd()
     rew_filter = RewardForwardFilter(config.gamma)
+
+    # Bootstrap obs_rms with random actions
     obs = envs.reset()
     obs_batch = []
     for _ in range(config.num_steps * 50):
         act = np.random.randint(0, envs.action_space.n, size=(config.num_envs,))
         obs, rew, done, _ = envs.step(act)
-        obs_last = obs[:, -1:, :, :].reshape(-1, 1, 84, 84)
-        obs_batch += list(obs_last)
-
-        if len(obs_batch) == config.num_envs * config.num_steps:
-            obs_batch_np = np.stack(obs_batch)
-            obs_rms.update(obs_batch_np)
+        obs_t = torch.as_tensor(obs)
+        last = last_frame_nchw(obs_t).cpu().numpy() # [N,1,H,W]
+        obs_batch.append(last)
+        if len(obs_batch) > config.num_envs * config.num_steps:
+            obs_rms.update(np.concatenate(obs_batch, axis=0))
             obs_batch = []
 
     # Rollout buffers
     T, N = config.num_steps, config.num_envs
-    obs_buff  = torch.empty((T, N) + envs.observation_space.shape, dtype=torch.float32, device=device)
-    act_buff  = torch.empty((T, N) + envs.action_space.shape, dtype=torch.float32, device=device)
+    obs_buff = torch.empty((T, N, C, H, W), dtype=torch.float32, device=device)
+    act_buff = torch.empty((T, N), dtype=torch.int64, device=device)
     logp_buff = torch.empty((T, N), dtype=torch.float32, device=device)
     ext_val_buff = torch.empty((T, N), dtype=torch.float32, device=device)
     int_val_buff = torch.empty((T, N), dtype=torch.float32, device=device)
-    rew_buff  = torch.empty((T, N), dtype=torch.float32, device=device)
-    rew_curiosity_buff  = torch.empty((T, N), dtype=torch.float32, device=device)
+    rew_buff = torch.empty((T, N), dtype=torch.float32, device=device)
+    rew_curiosity_buff = torch.empty((T, N), dtype=torch.float32, device=device)
     done_buff = torch.empty((T, N), dtype=torch.bool, device=device)
     avg_returns = deque(maxlen=20)
 
     # Training loop
     steps = 0
     obs = envs.reset()
-    obs_t = torch.tensor(obs, dtype=torch.float32, device=device)
+    obs_t = torch.as_tensor(obs, device=device, dtype=torch.float32)
+    obs_t = ensure_nchw(obs_t)
     done_t = torch.zeros(N, dtype=torch.bool, device=device)
 
     for itr in range(config.num_iterations):
@@ -155,25 +181,40 @@ def train(config: RNDConfig) -> None:
             done_buff[t] = done_t
             with torch.no_grad():
                 action_t, logp_t, _, int_val_t, ext_val_t = agent.act(obs_t)
-                ext_val_buff[t] = ext_val_t.squeeze(-1)
-                int_val_buff[t] = int_val_t.squeeze(-1)
+                ext_val_buff[t] = ext_val_t
+                int_val_buff[t] = int_val_t
 
             act_buff[t] = action_t
             logp_buff[t] = logp_t
 
             obs, reward, done, info = envs.step(action_t.cpu().numpy())
-            rew_buff[t] = torch.tensor(reward, dtype=torch.float32, device=device).squeeze(-1)
-            obs_t = torch.tensor(obs, dtype=torch.float32, device=device)
-            done_t = torch.tensor(done, dtype=torch.bool, device=device).squeeze(-1)
+            rew_buff[t] = torch.as_tensor(reward, dtype=torch.float32, device=device)
+            obs_t = torch.as_tensor(obs, dtype=torch.float32, device=device)
+            obs_t = ensure_nchw(obs_t)
+            done_t = torch.as_tensor(done, dtype=torch.bool, device=device)
 
-            obs_slice_t = obs_t[:, -1:, :, :].reshape(N, 1, 84, 84)
-            obs_slice_t = (obs_slice_t - torch.tensor(obs_rms.mean, device=device)) / torch.sqrt(torch.tensor(obs_rms.var, device=device) + 1e-8)
-            obs_slice_t = torch.clamp(obs_slice_t, -5.0, 5.0).float()
+            # RND uses normalized last frame
+            last = last_frame_nchw(obs_t)  # [N,1,H,W]
+            obs_mean = torch.as_tensor(obs_rms.mean, dtype=last.dtype, device=device)
+            obs_var = torch.as_tensor(obs_rms.var, dtype=last.dtype, device=device)
+            norm_last = torch.clamp((last - obs_mean) / torch.sqrt(obs_var + 1e-8), -5.0, 5.0)
 
-            pred_feat_t, target_feat_t = rnd(obs_slice_t)
+            pred_feat_t, target_feat_t = rnd(norm_last)
             rnd_loss_t = (pred_feat_t - target_feat_t).pow(2).mean(1)
-            rew_curiosity_t = rnd_loss_t.detach()
-            rew_curiosity_buff[t] = rew_curiosity_t
+            rew_curiosity_raw = rnd_loss_t.detach()
+
+            rew_discounted = rew_filter.update(rew_curiosity_raw.cpu().numpy())
+            rew_rms.update_from_moments(
+                np.mean(rew_discounted),
+                np.var(rew_discounted),
+                rew_discounted.size,
+            )
+            rew_curiosity_norm = torch.as_tensor(
+                rew_discounted / np.sqrt(rew_rms.var + 1e-8),
+                dtype=torch.float32,
+                device=device,
+            )
+            rew_curiosity_buff[t] = rew_curiosity_norm
 
             for idx, d in enumerate(done):
                 if d and info["lives"][idx] == 0:
@@ -184,26 +225,15 @@ def train(config: RNDConfig) -> None:
                         "train/episode_return": info["r"][idx],
                         "train/episode_length": info["l"][idx],
                         "train/average_return": epi_ret,
-                        "train/curiosity_reward": rew_curiosity_t[idx].item(),
+                        "train/curiosity_reward": rew_curiosity_raw[idx].item(),
                     }, step=steps)
 
             steps += N
-
-        # discounted return for curiosity rewards
-        rew_curiosity_np = np.array([rew_filter.update(rew_curiosity_env) for rew_curiosity_env in rew_curiosity_buff.cpu().numpy().T])
-        rew_mean, rew_std, rew_count = np.mean(rew_curiosity_np), np.std(rew_curiosity_np), len(rew_curiosity_np)
-        rew_rms.update_from_moments(rew_mean, rew_std**2, rew_count)
-        
-        # normalize curiosity rewards
-        rew_curiosity_buff = rew_curiosity_buff / torch.sqrt(torch.tensor(rew_rms.var, device=device) + 1e-8)
 
 
         # GAE: estimate advantage function by exponentially weighting TD-errors
         with torch.no_grad():
             last_int_val, last_ext_val = agent.value(obs_t)
-            last_ext_val = last_ext_val.squeeze(-1)
-            last_int_val = last_int_val.squeeze(-1)
-
             int_adv_buff = torch.zeros_like(rew_buff)
             ext_adv_buff = torch.zeros_like(rew_curiosity_buff)
             int_last_gae_lam = 0.0
@@ -230,9 +260,9 @@ def train(config: RNDConfig) -> None:
             int_ret_buff = int_adv_buff + int_val_buff
             ext_ret_buff = ext_adv_buff + ext_val_buff
         
-        # Flatten the batch
-        b_obs = obs_buff.reshape(T * N, *envs.observation_space.shape)
-        b_act = act_buff.reshape(T * N, *envs.action_space.shape)
+        # Flatten batch
+        b_obs = obs_buff.reshape(T * N, C, H, W)
+        b_act = act_buff.reshape(T * N)
         b_logp = logp_buff.reshape(T * N)
         b_int_val = int_val_buff.reshape(T * N)
         b_ext_val = ext_val_buff.reshape(T * N)
@@ -240,15 +270,19 @@ def train(config: RNDConfig) -> None:
         b_ext_ret = ext_ret_buff.reshape(T * N)
         b_int_adv = int_adv_buff.reshape(T * N)
         b_ext_adv = ext_adv_buff.reshape(T * N)
-        b_adv = 0.5 * b_int_adv + 2.0 * b_ext_adv
+        b_adv = 1.0 * b_int_adv + 2.0 * b_ext_adv # default weights for intrinsic/extrinsic advantage
 
-        obs_rms.update(b_obs[:, -1:, :, :].reshape(-1, 1, 84, 84).cpu().numpy())
+        # Update obs_rms with the last frame of the rollout
+        last_batch = last_frame_nchw(b_obs).cpu().numpy()
+        obs_rms.update(last_batch)
 
-        # fetch minibatches and update policy
-        rnd_obs_batch = b_obs[:, -1:, :, :].reshape(-1, 1, 84, 84)
-        rnd_obs_batch = (rnd_obs_batch - torch.tensor(obs_rms.mean, device=device)) / torch.sqrt(torch.tensor(obs_rms.var, device=device) + 1e-8)
-        rnd_obs_batch = torch.clamp(rnd_obs_batch, -5.0, 5.0).float()
+        # Prepare RND input
+        rnd_obs_batch = torch.as_tensor(last_batch, dtype=torch.float32, device=device)
+        obs_mean = torch.as_tensor(obs_rms.mean, dtype=rnd_obs_batch.dtype, device=device)
+        obs_var = torch.as_tensor(obs_rms.var, dtype=rnd_obs_batch.dtype, device=device)
+        rnd_obs_batch = torch.clamp((rnd_obs_batch - obs_mean) / torch.sqrt(obs_var + 1e-8), -5.0, 5.0)
 
+        # Optimize policy and value network
         b_inds = np.arange(T * N)
         for epoch in range(epochs):
             np.random.shuffle(b_inds)
@@ -257,15 +291,15 @@ def train(config: RNDConfig) -> None:
                 mb_inds = b_inds[start:end]
 
                 rnd_pred_feat, rnd_target_feat = rnd(rnd_obs_batch[mb_inds])
-                rnd_loss = torch.nn.functional.mse_loss(rnd_pred_feat, rnd_target_feat.detach(), reduction="none").mean(-1) # per-sample loss
+                rnd_loss = torch.nn.functional.mse_loss(rnd_pred_feat, rnd_target_feat.detach(), reduction="none").mean(-1)
 
                 # "dropout" for RND loss (update_proportion in the original paper)
-                dropout_mask = (torch.rand_like(rnd_loss) < config.rnd_update_proportion).float()
-                rnd_loss = (rnd_loss * dropout_mask).sum() / torch.max(dropout_mask.sum(), torch.tensor(1.0, device=device)) # avoid div-by-zero
+                mask = (torch.rand_like(rnd_loss) < config.rnd_update_proportion).float()
+                rnd_loss = (rnd_loss * mask).sum() / torch.clamp(mask.sum(), min=1.0)
 
                 # PPO
-                _, logp, entropy, int_value, ext_value = agent.act(b_obs[mb_inds], b_act.long()[mb_inds]) # use long because of Categorical
-                ratio = torch.exp(logp - b_logp[mb_inds]) 
+                _, logp, entropy, int_value, ext_value = agent.act(b_obs[mb_inds], b_act[mb_inds])
+                ratio = torch.exp(logp - b_logp[mb_inds])
 
                 # kl approximation
                 with torch.no_grad():
@@ -274,48 +308,42 @@ def train(config: RNDConfig) -> None:
                 mb_adv = b_adv[mb_inds]
                 mb_adv = (mb_adv - mb_adv.mean()) / (mb_adv.std() + 1e-8)
 
-                # pg loss
+                # policy loss
                 surr1 = ratio * mb_adv
                 surr2 = torch.clamp(ratio, 1.0 - epsilon, 1.0 + epsilon) * mb_adv
                 policy_loss = -torch.min(surr1, surr2).mean()
 
-                # value loss
-                int_value, ext_value = int_value.squeeze(-1), ext_value.squeeze(-1)
-
-                # extrinsic value loss
+                # value losses (clipped for extrinsic, unclipped for intrinsic)
                 ext_v_loss_raw = (ext_value - b_ext_ret[mb_inds]) ** 2
-                ext_v_clipped = b_ext_val[mb_inds] + torch.clamp(ext_value - b_ext_val[mb_inds], -epsilon, epsilon)
+                ext_v_clipped = b_ext_val[mb_inds] + torch.clamp(ext_value - b_ext_val[mb_inds], -config.vf_clip_coef, config.vf_clip_coef)
                 ext_v_loss_clipped = (ext_v_clipped - b_ext_ret[mb_inds]) ** 2
                 ext_value_loss = 0.5 * torch.max(ext_v_loss_raw, ext_v_loss_clipped).mean()
 
-                # intrinsic value loss
-                int_v_loss = 0.5 * ((int_value - b_int_ret[mb_inds]) ** 2).mean() # no clipping for intrinsic value
+                int_v_loss = 0.5 * ((int_value - b_int_ret[mb_inds]) ** 2).mean()
                 value_loss = int_v_loss + ext_value_loss
 
-                # entropy loss
                 entropy_loss = -entropy.mean()
 
-                loss = policy_loss + config.vf_coef * value_loss + config.ent_coef * entropy_loss + 0.5 * rnd_loss
-            
-                optimizer.zero_grad()
+                loss = policy_loss + config.vf_coef * value_loss + config.ent_coef * entropy_loss + rnd_loss
+
+                optimizer.zero_grad(set_to_none=True)
                 loss.backward()
-                torch.nn.utils.clip_grad_norm_(agent.parameters(), max_norm=0.5)
+                torch.nn.utils.clip_grad_norm_(params, max_norm=0.5)
                 optimizer.step()
 
-        logger.log({
-            "losses/policy_loss": policy_loss.item(),
-            "losses/value_loss": value_loss.item(),
-            "losses/int_value_loss": int_v_loss.item(),
-            "losses/ext_value_loss": ext_value_loss.item(),
-            "losses/entropy_loss": entropy_loss.item(),
-            "losses/rnd_loss": rnd_loss.item(),
-            "losses/kl_div": kl_div.item(),
-        }, step=steps)
-
-        # DEBUG
-        logger.log({
-            "debug/lr": optimizer.param_groups[0]["lr"],
-        }, step=steps)
+        logger.log(
+            {
+                "losses/policy_loss": policy_loss.item(),
+                "losses/value_loss": value_loss.item(),
+                "losses/int_value_loss": int_v_loss.item(),
+                "losses/ext_value_loss": ext_value_loss.item(),
+                "losses/entropy_loss": entropy_loss.item(),
+                "losses/rnd_loss": rnd_loss.item(),
+                "losses/kl_div": kl_div.item(),
+                "debug/lr": optimizer.param_groups[0]["lr"],
+            },
+            step=steps,
+        )
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Train a PPO agent.")

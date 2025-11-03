@@ -38,7 +38,7 @@ class BaseConfig:
 class ExperimentConfig(BaseConfig):
     """High-level run settings shared by most algorithms."""
 
-    env_id: str = "CartPole-v0"
+    env_id: str = "CartPole-v1"
     total_steps: int = 200_000
     eval_interval: int = 10_000
     log_dir: Path = field(default_factory=lambda: Path("runs"))

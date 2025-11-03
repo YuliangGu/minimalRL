@@ -3,21 +3,20 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
-
-import numpy as np
-import torch
 import time
+from dataclasses import dataclass
 
 import gymnasium as gym
 import gymnasium.wrappers as gym_wrappers
+import numpy as np
+import torch
 
+from minimalrl.algos.ppo.actor_critic import ActorCritic
 from minimalrl.core.config import ExperimentConfig, load_config
 from minimalrl.core.envs import make_env
 from minimalrl.core.logger import Logger, LoggerConfig
 from minimalrl.core.torch_utils import seed_all
 
-from minimalrl.algos.ppo.actor_critic import ActorCritic
 
 def wrap_env(env):
     """Continuous action specific wrappers. 
@@ -34,7 +33,7 @@ def wrap_env(env):
 @dataclass
 class PPOConfig(ExperimentConfig):
     # Overrides
-    env_id: str = "InvertedPendulum-v4"
+    env_id: str = "HalfCheetah-v4"
     learning_rate: float = 3e-4
     batch_size: int = 64      
     epochs: int = 10
@@ -54,7 +53,6 @@ class PPOConfig(ExperimentConfig):
 
 
 def train(config: PPOConfig) -> None:
-    """Train a PPO agent. Implementation intentionally minimal and pending."""
     seed_all(config.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     epsilon = config.epsilon
@@ -131,7 +129,7 @@ def train(config: PPOConfig) -> None:
                     next_values = val_buff[t + 1]
                 delta = rew_buff[t] + config.gamma * next_values * next_non_terminal - val_buff[t]
                 adv_buff[t] = last_gae_lam = delta + config.gamma * config.gae_lambda * next_non_terminal * last_gae_lam
-            ret_buff = adv_buff + val_buff # V_targets = A + Q_values
+            ret_buff = adv_buff + val_buff 
         
         # Flatten the batch
         b_obs = obs_buff.view(T * N, *envs.single_observation_space.shape)

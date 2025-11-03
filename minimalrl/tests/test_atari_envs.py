@@ -7,10 +7,10 @@ import pytest
 gymnasium = pytest.importorskip("gymnasium")
 pytest.importorskip("ale_py")
 
-import numpy as np
 import envpool
+import numpy as np
 
-from minimalrl.core.envs import make_env, make_vector_env
+from minimalrl.core.envs import make_env
 
 ATARI_ENV_IDS = ("ALE/Pong-v5", "ALE/Breakout-v5")
 

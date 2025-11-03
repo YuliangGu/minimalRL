@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Iterable, Sequence
+from collections.abc import Iterable, Sequence
 
 import torch
-import torch.nn as nn
+from torch import nn
+
 
 # Orthogonal initialization for MLPs
 def init_weights(layer, std: float = 5/3, bias_const: float = 0.0):     # 5/3 for Tanh, sqrt(2) for ReLU
@@ -48,7 +49,7 @@ class NatureCNN(nn.Module):
         self.flatten = nn.Flatten()
         self.fc = nn.Linear(7 * 7 * 64, features_dim)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:  # type: ignore[override]
+    def forward(self, x: torch.Tensor) -> torch.Tensor:  
         x = x / 255.0
         x = self.conv(x)
         x = self.flatten(x)
@@ -64,11 +65,11 @@ class DiagonalGaussianHead(nn.Module):
         self.log_std = nn.Linear(in_dim, action_dim)
         self.log_std_bounds = tuple(log_std_bounds)
 
-    def forward(self, x: torch.Tensor) -> torch.distributions.Normal:  # type: ignore[override]
+    def forward(self, x: torch.Tensor) -> torch.distributions.Normal: 
         mu = self.mu(x)
         log_std = self.log_std(x)
         min_log_std, max_log_std = self.log_std_bounds
-        log_std = torch.tanh(log_std)
+        log_std = torch.tanh(log_std)   # squash to [-1, 1]
         log_std = min_log_std + 0.5 * (max_log_std - min_log_std) * (log_std + 1)
         std = log_std.exp()
         return torch.distributions.Normal(mu, std)

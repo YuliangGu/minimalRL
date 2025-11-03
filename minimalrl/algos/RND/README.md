@@ -1,22 +1,13 @@
-# Random Network Distillation (RND)
+# Random Network Distillation
 
-**High-level Idea** Random Network Distillation (RND) augments reinforcement learning with an intrinsic reward. The main idea is to train a predictor network to match the output of a randomly initialized, fixed target network. Whenever the agent encounters novel states, the prediction error are high, thereby providing a continual curiosity signal.
+- `train.py` integrates RND with PPO to add intrinsic rewards for exploration-heavy tasks.
+- `actor_critic_cnn.py` hosts the convolutional actor-critic used for Atari experiments.
+- `theory.md` covers the predictor/target setup and intrinsic reward derivation.
 
-**Architecture** RND uses two networks that share the same architecture:
+Head to `docs/algorithms/rnd.md` for a project-level summary.
 
-- **Target Network** $\hat{f}_\theta(x)$: randomly initialized and *frozen*. It maps observations to a feature embedding. 
-- **Predictor network** $f_\phi(x)$: initialized separately and trained to regress onto the target’s features.
-
-**Intrinsic Reward** During rollouts, the agent processes each observation with RND and receives an intrinsic reward proportional to the prediction error, often scaled and normalized:
-$
-\begin{equation}
- r^{\text{int}}_t \propto \|f_\phi(x_t) - \hat{f}_\theta(x_t)\|_2^2.
-\end{equation}
-$
-Combining this with the environment’s extrinsic reward encourages exploration on *novel* states.
-
-## Some Training Details
-
-- Architectural asymmetry
-- obs/reward normalization
-- *dropout* when training RND
+## Quickstart
+```bash
+python -m minimalrl.algos.RND.train --help
+```
+By default this spins up PPO+RND on `Pong-v5`; adjust environments and schedules with CLI flags. EnvPool is required for the default loop, so install with the `envpool` extra.

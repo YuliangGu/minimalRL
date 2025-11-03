@@ -9,12 +9,11 @@ from typing import List
 import numpy as np
 import torch
 
+from minimalrl.algos.reinforce.policy import ReinforcePolicy
 from minimalrl.core.config import ExperimentConfig, load_config
-from minimalrl.core.envs import make_env, make_vector_env
+from minimalrl.core.envs import make_vector_env
 from minimalrl.core.logger import Logger, LoggerConfig
 from minimalrl.core.torch_utils import seed_all
-
-from minimalrl.algos.reinforce.policy import ReinforcePolicy, ReinforcePolicyConfig
 
 
 @dataclass
@@ -50,7 +49,7 @@ def train(config: ReinforceConfig) -> None:
     if is_discrete:
         action_dim = env.single_action_space.n      
     else:
-        action_dim = int(np.prod(act_shape))   
+        raise NotImplementedError("REINFORCE currently only supports discrete action spaces.")
 
     agent = ReinforcePolicy(obs_dim=obs_dim, action_dim=action_dim, hidden_sizes=config.hidden_sizes)
     agent.to(device)
@@ -152,5 +151,5 @@ def main() -> None:
         train(ReinforceConfig())
 
 
-if __name__ == "__main__":  # pragma: no cover
+if __name__ == "__main__":
     main()
