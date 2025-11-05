@@ -87,7 +87,7 @@ def train(config: PPOConfig) -> None:
     # Training loop
     steps = 0
     obs, _ = envs.reset()
-    obs_t = torch.tensor(obs, dtype=torch.float32, device=device)
+    obs_t = torch.as_tensor(obs, dtype=torch.float32, device=device)
     done_t = torch.zeros(N, dtype=torch.bool, device=device)
 
     for itr in range(config.num_iterations):
@@ -102,10 +102,10 @@ def train(config: PPOConfig) -> None:
 
             obs, reward, terminated, truncated, info = envs.step(action_t.cpu().numpy())
             done_np = np.logical_or(terminated, truncated)
-            rew_buff[t] = torch.tensor(reward, dtype=torch.float32, device=device)
-            
-            obs_t = torch.tensor(obs, dtype=torch.float32, device=device)
-            done_t = torch.tensor(done_np, dtype=torch.bool, device=device)
+            rew_buff[t] = torch.as_tensor(reward, dtype=torch.float32, device=device)
+
+            obs_t = torch.as_tensor(obs, dtype=torch.float32, device=device)
+            done_t = torch.as_tensor(done_np, dtype=torch.bool, device=device)
 
             steps += N
             if "final_info" in info:

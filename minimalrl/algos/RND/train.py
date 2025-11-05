@@ -199,10 +199,12 @@ def train(config: RNDConfig) -> None:
             obs_var = torch.as_tensor(obs_rms.var, dtype=last.dtype, device=device)
             norm_last = torch.clamp((last - obs_mean) / torch.sqrt(obs_var + 1e-8), -5.0, 5.0)
 
+            # Compute curiosity(intrinsic) reward
             pred_feat_t, target_feat_t = rnd(norm_last)
             rnd_loss_t = (pred_feat_t - target_feat_t).pow(2).mean(1)
             rew_curiosity_raw = rnd_loss_t.detach()
 
+            # Normalize intrinsic reward (no normalization on the extrinsic reward)
             rew_discounted = rew_filter.update(rew_curiosity_raw.cpu().numpy())
             rew_rms.update_from_moments(
                 np.mean(rew_discounted),
@@ -231,7 +233,7 @@ def train(config: RNDConfig) -> None:
             steps += N
 
 
-        # GAE: estimate advantage function by exponentially weighting TD-errors
+        # GAE
         with torch.no_grad():
             last_int_val, last_ext_val = agent.value(obs_t)
             int_adv_buff = torch.zeros_like(rew_buff)
@@ -260,7 +262,6 @@ def train(config: RNDConfig) -> None:
             int_ret_buff = int_adv_buff + int_val_buff
             ext_ret_buff = ext_adv_buff + ext_val_buff
         
-        # Flatten batch
         b_obs = obs_buff.reshape(T * N, C, H, W)
         b_act = act_buff.reshape(T * N)
         b_logp = logp_buff.reshape(T * N)
@@ -272,11 +273,10 @@ def train(config: RNDConfig) -> None:
         b_ext_adv = ext_adv_buff.reshape(T * N)
         b_adv = 1.0 * b_int_adv + 2.0 * b_ext_adv # default weights for intrinsic/extrinsic advantage
 
-        # Update obs_rms with the last frame of the rollout
+        # Update observation normalization statistics
         last_batch = last_frame_nchw(b_obs).cpu().numpy()
         obs_rms.update(last_batch)
 
-        # Prepare RND input
         rnd_obs_batch = torch.as_tensor(last_batch, dtype=torch.float32, device=device)
         obs_mean = torch.as_tensor(obs_rms.mean, dtype=rnd_obs_batch.dtype, device=device)
         obs_var = torch.as_tensor(obs_rms.var, dtype=rnd_obs_batch.dtype, device=device)
@@ -293,27 +293,25 @@ def train(config: RNDConfig) -> None:
                 rnd_pred_feat, rnd_target_feat = rnd(rnd_obs_batch[mb_inds])
                 rnd_loss = torch.nn.functional.mse_loss(rnd_pred_feat, rnd_target_feat.detach(), reduction="none").mean(-1)
 
-                # "dropout" for RND loss (update_proportion in the original paper)
+                # Randomly mask a proportion of RND loss to stabilize training (as in the original RND paper)
                 mask = (torch.rand_like(rnd_loss) < config.rnd_update_proportion).float()
                 rnd_loss = (rnd_loss * mask).sum() / torch.clamp(mask.sum(), min=1.0)
 
-                # PPO
+                # Standard PPO update
                 _, logp, entropy, int_value, ext_value = agent.act(b_obs[mb_inds], b_act[mb_inds])
                 ratio = torch.exp(logp - b_logp[mb_inds])
 
-                # kl approximation
                 with torch.no_grad():
                     kl_div = ((ratio - 1) - torch.log(ratio)).mean()
 
                 mb_adv = b_adv[mb_inds]
                 mb_adv = (mb_adv - mb_adv.mean()) / (mb_adv.std() + 1e-8)
 
-                # policy loss
                 surr1 = ratio * mb_adv
                 surr2 = torch.clamp(ratio, 1.0 - epsilon, 1.0 + epsilon) * mb_adv
                 policy_loss = -torch.min(surr1, surr2).mean()
 
-                # value losses (clipped for extrinsic, unclipped for intrinsic)
+                # value losses (intrinsic value are not clipped)
                 ext_v_loss_raw = (ext_value - b_ext_ret[mb_inds]) ** 2
                 ext_v_clipped = b_ext_val[mb_inds] + torch.clamp(ext_value - b_ext_val[mb_inds], -config.vf_clip_coef, config.vf_clip_coef)
                 ext_v_loss_clipped = (ext_v_clipped - b_ext_ret[mb_inds]) ** 2

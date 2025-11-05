@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Tuple
 
+import numpy as np
+import copy
 import torch
 from torch import nn
 from torch.distributions import Normal
@@ -47,8 +49,6 @@ class Actor(nn.Module):
 
         action = torch.tanh(action) * self.action_scale
 
-        entropy = probs.entropy().sum(axis=-1)
-        
         return action, log_prob
 
 class Critic(nn.Module):
@@ -72,12 +72,32 @@ class Critic(nn.Module):
 class ActorCriticSAC(nn.Module):
     """Combined actor-critic module for SAC."""
 
-    def __init__(self, obs_dim: int, action_dim: int, hidden_sizes: Tuple[int, ...] = (256, 256), action_scale: float = 1.0):
+    def __init__(self, obs_dim: int, action_dim: int, hidden_sizes: Tuple[int, ...] = (256, 256), action_scale: float = 1.0, temperature: float = 0.1):
         super().__init__()
         self.actor = Actor(obs_dim, action_dim, hidden_sizes, action_scale)
         self.critic1 = Critic(obs_dim, action_dim, hidden_sizes)
         self.critic2 = Critic(obs_dim, action_dim, hidden_sizes)
+        
+        # target networks
+        self.critic1_target = copy.deepcopy(self.critic1)
+        self.critic2_target = copy.deepcopy(self.critic2)
+
+        for param in self.critic1_target.parameters():
+            param.requires_grad = False
+        for param in self.critic2_target.parameters():
+            param.requires_grad = False
+
+        if temperature <= 0.0:
+            raise ValueError("temperature must be positive for log_alpha computation")
+
+        self.log_alpha = nn.Parameter(torch.tensor(np.log(temperature), dtype=torch.float32))
 
     def act(self, obs: torch.Tensor, deterministic: bool = False) -> torch.Tensor:
         action, _ = self.actor(obs, deterministic)
         return action
+
+    def soft_update(self, tau: float) -> None:
+        for target_param, param in zip(self.critic1_target.parameters(), self.critic1.parameters()):
+            target_param.data.copy_(tau * param.data + (1.0 - tau) * target_param.data)
+        for target_param, param in zip(self.critic2_target.parameters(), self.critic2.parameters()):
+            target_param.data.copy_(tau * param.data + (1.0 - tau) * target_param.data)

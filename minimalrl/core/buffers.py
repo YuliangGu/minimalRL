@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Dict, List, Tuple
+import torch
 
 import numpy as np
 
 Batch = Dict[str, np.ndarray]
-
+BatchT = Dict[str, torch.Tensor]
 
 @dataclass
 class ReplayBuffer:
@@ -23,14 +24,14 @@ class ReplayBuffer:
         self.observations = np.zeros((self.capacity, *self.obs_shape), dtype=np.float32)
         self.actions = np.zeros((self.capacity, *self.action_shape), dtype=np.float32)
         self.rewards = np.zeros((self.capacity,), dtype=np.float32)
-        self.discounts = np.ones((self.capacity,), dtype=np.float32)
+        self.dones = np.ones((self.capacity,), dtype=np.float32)
         self.next_observations = np.zeros((self.capacity, *self.obs_shape), dtype=np.float32)
 
-    def add(self, obs, action, reward, discount, next_obs) -> None:
+    def add(self, obs, action, reward, done, next_obs) -> None:
         self.observations[self.ptr] = obs
         self.actions[self.ptr] = action
         self.rewards[self.ptr] = reward
-        self.discounts[self.ptr] = discount
+        self.dones[self.ptr] = done
         self.next_observations[self.ptr] = next_obs
         self.ptr = (self.ptr + 1) % self.capacity
         self.full = self.full or self.ptr == 0
@@ -42,10 +43,13 @@ class ReplayBuffer:
             "observations": self.observations[indices],
             "actions": self.actions[indices],
             "rewards": self.rewards[indices],
-            "discounts": self.discounts[indices],
+            "dones": self.dones[indices],
             "next_observations": self.next_observations[indices],
         }
 
+    def sample_t(self, batch_size: int, device: torch.device) -> BatchT:
+        batch = self.sample(batch_size)
+        return {k: torch.as_tensor(v, device=device) for k, v in batch.items()}
 
 @dataclass
 class TrajectoryBuffer:

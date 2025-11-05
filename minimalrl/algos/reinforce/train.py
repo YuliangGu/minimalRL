@@ -105,7 +105,7 @@ def train(config: ReinforceConfig) -> None:
         returns_to_go = torch.zeros_like(rew_buff)
         running = torch.zeros(N, dtype=torch.float32, device=device)
         for t in reversed(range(T)):
-            not_done = (~done_buff[t]).float()  # 1.0 if not done, 0.0 if done
+            not_done = (~done_buff[t]).float()
             running = rew_buff[t] + config.gamma * running * not_done
             returns_to_go[t] = running
 
@@ -122,7 +122,8 @@ def train(config: ReinforceConfig) -> None:
 
         # Update policy (no baseline)
         loss = - (logp * b_ret).mean()
-        
+
+        # Optional entropy bonus
         if config.ent_coef:
             loss = loss - config.ent_coef * entropy.mean()
 
@@ -137,8 +138,6 @@ def train(config: ReinforceConfig) -> None:
         logger.log({"loss": float(loss.item()), "avg_ep_return": avg_return}, step=global_step)
 
     logger.close()
-
-
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Train a REINFORCE agent.")
