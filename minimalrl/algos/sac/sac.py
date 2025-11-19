@@ -33,21 +33,27 @@ class Actor(nn.Module):
 
     def forward(self, obs, deterministic: bool = False) -> tuple[torch.Tensor, torch.Tensor]:
         net_out = self.net(obs)
+        scale = float(self.action_scale)
+
         action_mean = self.action_mean(net_out)
         action_log_std = self.action_log_std(net_out)
         action_log_std = torch.clamp(action_log_std, LOG_STD_MIN, LOG_STD_MAX)
+        
         action_std = torch.exp(action_log_std)
-
         probs = Normal(action_mean, action_std)
+
         if deterministic:
-            action = action_mean
+            pre_tanh = action_mean
         else:
-            action = probs.rsample()
+            pre_tanh = probs.rsample()
+        
+        base_log_prob = probs.log_prob(pre_tanh).sum(dim=-1)
+        log_det = torch.log1p(-torch.tanh(pre_tanh).pow(2) + 1e-6).sum(dim=-1)
+        log_prob = base_log_prob - log_det
 
-        log_prob = probs.log_prob(action).sum(axis=-1) 
-        log_prob -= (2 * (np.log(2) - action - nn.functional.softplus(-2 * action))).sum(axis=1) # see SAC paper appendix C
-
-        action = torch.tanh(action) * self.action_scale
+        action = torch.tanh(pre_tanh)
+        if scale != 1.0:
+            action = action * scale
 
         return action, log_prob
 

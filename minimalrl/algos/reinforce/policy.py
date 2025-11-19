@@ -39,7 +39,7 @@ class ReinforcePolicy(nn.Module):
     
     def get_log_probs(self, obs, actions):
         batch = obs.view(obs.shape[0], -1)
-        z = self.policy_net(batch)
+        z = self.policy_net(batch) 
         log_probs = z - torch.logsumexp(z, dim=-1, keepdim=True)                    # logsumexp trick
         selected_log_probs = log_probs.gather(-1, actions.long().unsqueeze(-1)).squeeze(-1)
         entropy = -(log_probs.exp() * log_probs).sum(dim=-1)

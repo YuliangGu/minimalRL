@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
+from pathlib import Path
 import time
 
 import gymnasium as gym
@@ -21,18 +22,22 @@ from minimalrl.core.buffers import ReplayBuffer
 class SACConfig(ExperimentConfig):
     # Overrides
     env_id: str = "InvertedPendulum-v4"
-    learning_rate: float = 1e-4
-    batch_size: int = 512      
-    warmup_steps: int = 500
+    learning_rate: float = 3e-4
+    batch_size: int = 256
+    warmup_steps: int = 5000
     total_steps: int = 1_000_000
     replay_buffer_size: int = 1_000_000
     update_frequency: int = 1
+
+    save_frequency: int = 10000  # save every n steps; if negative, disables saving
+    save_data: bool = True
+    save_dir: Path = Path("SACagents")
     
     hidden_sizes: tuple[int, ...] = (256, 256)
     gamma: float = 0.99
     tau: float = 0.005
     alpha: float = -1.0                 # target entropy; if negative, defaults to -action_dim
-    init_temperature: float = 0.2  
+    init_temperature: float = 0.1      
 
 def train(config: SACConfig) -> None:
     seed_all(config.seed)
@@ -52,6 +57,7 @@ def train(config: SACConfig) -> None:
 
     replay_buffer = ReplayBuffer(replay_buffer_size, obs_shape, action_shape)
     action_scale = float(env.action_space.high[0]) if hasattr(env.action_space, "high") else 1.0
+    print(f"Action scale: {action_scale}")
     agent = ActorCriticSAC(
         obs_shape[0],
         action_shape[0],
@@ -69,6 +75,10 @@ def train(config: SACConfig) -> None:
 
     run_name = f"SAC-{config.env_id}_{config.seed}_{int(time.time())}"
     logger = Logger(LoggerConfig(log_dir=config.log_dir, run_name=run_name))
+
+    save_dir = Path(config.save_dir)
+    if config.save_frequency > 0:
+        save_dir.mkdir(parents=True, exist_ok=True)
 
     steps = 0
     obs, _ = env.reset()
@@ -106,8 +116,6 @@ def train(config: SACConfig) -> None:
         if steps >= config.warmup_steps and steps % config.update_frequency == 0:
             for _ in range(config.update_frequency):
                 obs_b, action_b, reward_b, done_b, next_obs_b = replay_buffer.sample_t(batch_size, device).values()
-
-                # one-step update for critics?
 
                 # critic loss
                 q1, q2 = agent.critic1(obs_b, action_b), agent.critic2(obs_b, action_b)
@@ -154,6 +162,31 @@ def train(config: SACConfig) -> None:
                     "training/alpha_loss": alpha_loss.item(),
                     "training/alpha": torch.exp(agent.log_alpha).item(),
                 }, step=steps)
+
+                # Save model periodically
+                if config.save_frequency > 0 and steps % config.save_frequency == 0:
+                    checkpoint_path = save_dir / f"sac_actor_{config.env_id}_step{steps}_seed{config.seed}.pt"
+                    torch.save(
+                        {
+                            "actor": agent.actor.state_dict(),
+                            "obs_dim": obs_shape[0],
+                            "action_dim": action_shape[0],
+                            "hidden_sizes": config.hidden_sizes,
+                            "action_scale": action_scale,
+                        },
+                        checkpoint_path,
+                    )
+
+                    if config.save_data:
+                        limit = replay_buffer.capacity if replay_buffer.full else replay_buffer.ptr
+                        if limit > 0:
+                            data_path = save_dir / f"sac_data_{config.env_id}_seed{config.seed}.pt"
+                            observations = torch.as_tensor(
+                                replay_buffer.observations[:limit], dtype=torch.float32
+                            )
+                            actions = torch.as_tensor(replay_buffer.actions[:limit], dtype=torch.float32)
+                            torch.save({"observations": observations, "actions": actions}, data_path)
+                        
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Train a SAC agent.")

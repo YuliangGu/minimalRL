@@ -27,8 +27,7 @@ class DeterministicPolicyWrapper(torch.nn.Module):
             action, _ = self.module(obs, deterministic=True)
             return action
         if self.algo == "ppo":
-            # PPO actor is Gaussian; we expose the mean action for deployment.
-            return self.module.actor_mean(obs)
+            return self.module.actor_mean(obs)            # PPO actor is Gaussian; we expose the mean action for deployment.
         raise ValueError(f"Unsupported algo wrapper: {self.algo}")
 
 

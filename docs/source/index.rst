@@ -8,6 +8,7 @@ repository. Browse by algorithm to keep the overview and derivation side-by-side
    :maxdepth: 2
    :caption: Algorithms
 
+   algorithms/bc/index
    algorithms/reinforce/index
    algorithms/ppo/index
    algorithms/rnd/index

@@ -34,6 +34,7 @@ docs/           # Theory notes and longer-form guides
 ## Algorithms at a Glance
 - PPO (`python -m minimalrl.algos.ppo.train`) — clipped policy optimisation with GAE. Doc: [`docs/algorithms/ppo.md`](docs/algorithms/ppo.md).
 - REINFORCE (`python -m minimalrl.algos.reinforce.train`) — vanilla policy gradient baseline. Doc: [`docs/algorithms/reinforce.md`](docs/algorithms/reinforce.md).
+- DAgger BC (`python -m minimalrl.algos.bc.train --expert module:Policy`) — dataset aggregation behavior cloning. Doc: [`docs/source/algorithms/bc/index.rst`](docs/source/algorithms/bc/index.rst).
 - SAC (`python -m minimalrl.algos.sac.train`) — entropy-regularised actor-critic for continuous control. Doc: [`docs/algorithms/sac.md`](docs/algorithms/sac.md).
 - RND (`python -m minimalrl.algos.RND.train`) — intrinsic reward exploration head atop PPO. Doc: [`docs/algorithms/rnd.md`](docs/algorithms/rnd.md).
 
